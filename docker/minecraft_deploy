@@ -1,0 +1,174 @@
+#!/usr/bin/env ruby
+require 'optparse'
+require 'open-uri'
+require 'json'
+
+version = "v0.1.1"
+
+options = Hash.new
+optparse = OptionParser.new do|opts|
+  opts.banner = "Usage: #{$0} COMMAND [OPTIONS]"
+  opts.separator  ""
+  opts.separator  "Commands"
+  opts.separator  "     build:     Build server."
+  opts.separator  "     cleanup:   Cleanup servers."
+  opts.separator  "     deploy:    Deploy server."
+  opts.separator  "     download:  Download server."
+  opts.separator  "     list:      List servers."
+  opts.separator  "     version:   Show version info."
+  opts.separator  ""
+  opts.separator  "Options"
+
+  options[:licence] = :false
+  opts.on( '-l', '--licence VAL', [:true, :false], 'set licence' ) do |lic|
+    options[:licence] = lic
+  end
+
+  options[:port] = nil
+  opts.on( '-p', '--port NUM', 'Set port number' ) do|mport|
+    options[:port] = mport
+  end
+
+  options[:server] = nil
+  opts.on( '-s', '--server NUM', 'Set server version' ) do|mserver|
+    options[:server] = mserver
+  end
+
+  opts.on( '-h', '--help', 'Display this screen' ) do
+    puts opts
+    exit
+  end
+
+  begin
+    # Parse and remove options from ARGV.
+    opts.parse!
+  rescue OptionParser::ParseError => error
+    # Without this rescue, Ruby would print the stack trace
+    # of the error. Instead, we want to show the error message,
+    # suggest -h or --help, and exit 1.
+    $stderr.puts error
+    $stderr.puts "(-h or --help will show valid options)"
+    exit 1
+  end
+end
+# The 'parse' method parses ARGV.
+# The 'parse!' method parses ARGV and removes
+# any options found there, as well as any parameters for
+# the options.
+optparse.parse!
+
+def base_json
+  # connect to mojang and return parsed JSON
+  url_mojang = 'https://launchermeta.mojang.com/mc/game/version_manifest.json'
+  response = open(url_mojang).read
+  JSON.parse(response)
+end
+def release_urls
+  release_urls = Hash.new
+  # loop over top level json object
+  base_json["versions"].each do |k|
+    sub_data = k
+    # key of id is the Minecraft server version
+    minecraft_id = sub_data['id']
+    minecraft_url = sub_data['url']
+    # returns a hash of versions to urls
+    release_urls[minecraft_id] = minecraft_url
+  end
+  return release_urls
+end
+case ARGV[0]
+when "version"
+  puts version
+when "download"
+  if release_urls.key?(options[:server])
+    sub_url = release_urls[options[:server]]
+    puts sub_url
+    server_json = open(sub_url).read
+    sub_json_hash = JSON.parse(server_json)
+    server_data = sub_json_hash['downloads']['server'].to_h
+    puts server_data
+    if server_data.key?('url')
+      download_file = server_data['url']
+      if File.symlink?('server.jar')
+        puts "Cleaning up server link"
+        File.unlink('server.jar')
+      end
+      if File.exist?('eula.txt')
+        puts "Cleaning up EULA"
+        File.delete('eula.txt')
+      end
+      if File.exist?('white-list.txt')
+        puts "Cleaning up white-list.txt"
+        File.delete('white-list.txt')
+      end
+      if File.exist?('ops.txt')
+        puts "Cleaning up ops.txt"
+        File.delete('ops.txt')
+      end
+      open('minecraft_server.'+options[:server]+'.jar', 'wb') do |file|
+        file << open(download_file).read
+      end
+    end
+  else
+    puts "Server version not found"
+  end
+when "list"
+  release_urls.sort
+  release_urls.each do |k, v|
+    puts k
+    #printf "%-20s %s\n", k, v
+   end
+when "build"
+
+  puts "call build on options #{options.inspect}"
+when "deploy"
+  if release_urls.key?(options[:server])
+    sub_url = release_urls[options[:server]]
+    puts sub_url
+    server_json = open(sub_url).read
+    sub_json_hash = JSON.parse(server_json)
+    server_data = sub_json_hash['downloads']['server'].to_h
+    puts server_data
+    if server_data.key?('url')
+      download_file = server_data['url']
+      if options[:licence] == :true
+        File.open('eula.txt', 'w') { |file| file.write("eula=true") }
+      end
+      if options[:licence] == :false
+        File.open('eula.txt', 'w') { |file| file.write("eula=false") }
+      end
+      open('minecraft_server.'+options[:server]+'.jar', 'wb') do |file|
+        file << open(download_file).read
+        if File.symlink?('server.jar')
+          File.unlink('server.jar')
+        end
+        File.symlink('minecraft_server.'+options[:server]+'.jar', 'server.jar')
+      end
+    end
+  else
+    puts "Server version not found"
+  end
+when "cleanup"
+  if File.symlink?('server.jar')
+    puts "Cleaning up server link"
+    File.unlink('server.jar')
+  end
+  if !Dir.glob('./minecraft_server.*.jar').empty?
+    puts "Cleaning up servers"
+    Dir.glob('./minecraft_server.*.jar').each { |file| File.delete(file)}
+  end
+  if File.exist?('eula.txt')
+    puts "Cleaning up EULA"
+    File.delete('eula.txt')
+  end
+  if File.exist?('white-list.txt')
+    puts "Cleaning up white-list.txt"
+    File.delete('white-list.txt')
+  end
+  if File.exist?('ops.txt')
+    puts "Cleaning up ops.txt"
+    File.delete('ops.txt')
+  end
+else
+  puts optparse
+end
